@@ -83,10 +83,16 @@ while exist(cframefoldername)==7
 
     fprintf('3/4 (cellpose)'); % command line message
 
-    % call segmentCells3D function, from cellpose plugin library
-    % nuclei = segmentCells3D(cp_nuc, imageNuc_adjust); % default batch size
-    % % smaller batch size, if computational resources are limited:
-    nuclei = segmentCells3D(cp_nuc, imageNuc_adjust, 'GPUBatchSize', 2);
+    % segment volume based on exec_envir input
+    if strcmp(exec_envir, 'GPU')
+        % % call segmentCells3D function, from cellpose plugin library
+        % nuclei = segmentCells3D(cp_nuc, imageNuc_adjust); % default batch size
+        % smaller batch size, if computational resources are limited:
+        nuclei = segmentCells3D(cp_nuc, imageNuc_adjust, 'GPUBatchSize', 4);
+    elseif strcmp(exec_envir, 'CPU')
+        % call segmentCells3D function, from cellpose plugin library
+        nuclei = segmentCells3D(cp_nuc, imageNuc_adjust);
+    end
 
     fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b') % clear command line message
 
