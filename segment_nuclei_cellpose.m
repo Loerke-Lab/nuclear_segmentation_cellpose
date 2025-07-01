@@ -1,4 +1,3 @@
-
 function [] = segment_nuclei_cellpose(data, exec_envir)
 % Function to segment nuclei using cellpose. Requires  Deep Learning Toolbox™, 
 %       Computer Vision Toolbox™, and the Medical Imaging Toolbox™ Interface 
@@ -18,6 +17,7 @@ function [] = segment_nuclei_cellpose(data, exec_envir)
 %
 % L. Russell (updated 24 June, 2025)
 od = cd; % original directory
+warning('off','all'); % silence command line warnings
 
 %% CONSTANTS + LOAD DATA
 t_in = 1; % initial time point (change as needed)
@@ -28,8 +28,7 @@ imageFileList = data(mn).ImageFileListNuc; % list of raw image file names
 im_temp = imread(imageFileList{1,1}); % load the first image to extract dimensions
 im_size = [size(im_temp,1), size(im_temp,2), size(imageFileList,2)]; % get size of volumes
 % z_scale = round(im_size(3) * pix_res); % rescaling factor
-z_scale = round(im_size(3)); % rescaling factor of 1, for debugging
-
+z_scale = round(im_size(3)); % rescaling factor of 1
 
 % load cellpose model, with preferred environment
 fprintf('Loading Cellpose model...'); % command line message
