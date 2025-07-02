@@ -102,7 +102,8 @@ while exist(cframefoldername)==7
         % if starting at frame > t=1, load previous frame for tracking
         cframefoldername_last = sprintf('frame%04d',t-1); % naming convention of seg folders
         cd(data.Source); cd('SegmentationData'); cd(cframefoldername_last);
-        nuclei_last = load('nuclei.mat').nuclei;
+        nuclei_last = load('nuclei_cp.mat').nuclei_cp;
+        % nuclei_last = load('nuclei.mat').nuclei;
         nuclei_last = max(nuclei_last,[],3);
 
         nuclei_last = nuclei_last .* 10000; % re-scale tracking from previous frame
