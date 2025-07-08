@@ -53,8 +53,8 @@ cd(data(mn).Source); cd('SegmentationData') % navigate to segmentation folder
 t = t_in;
 cframefoldername = sprintf('frame%04d',t); % naming convention of seg folders
 count = t_in; % counting variable, for tracking
-% while exist(cframefoldername)==7
-for t = t_in  % alternate loop start, for debugging
+while exist(cframefoldername)==7
+% for t = t_in  % alternate loop start, for debugging
 
     % display current progress of processing
     fprintf('extracting @ timepoint %04d\n',t);
