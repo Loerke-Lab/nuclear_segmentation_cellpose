@@ -22,6 +22,7 @@ warning('off','all'); % silence command line warnings
 %% CONSTANTS + LOAD DATA
 t_in = 1; % initial time point (change as needed)
 mn = 1; % movie index in data structure
+ds_factor = 2; % down-sampling factor
 pix_res = data(mn).PixRes; % # of pixels / micron
 imageFileList = data(mn).ImageFileListNuc; % list of raw image file names
 
@@ -31,7 +32,7 @@ cd(data(mn).Source); % navigate to Source
 im_temp = tiffreadVolume(imageFileList{1}); % load the first image volume
 im_size = size(im_temp); % get size of volumes
 z_scale = round(im_size(3) * pix_res/2); % rescaling factor
-z_lim = round(im_size(3)); % segment full volume
+z_lim = round(im_size(3)) - 13; % segment full volume
 % z_lim = round(im_size(3) .* (2/3)); % only segment apical most 2/3 of volume
 % z_lim = round(im_size(3) .* (2/3)); % only segment apical most 1/2 of volume
 fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b'); % clear command line message
@@ -52,8 +53,8 @@ cd(data(mn).Source); cd('SegmentationData') % navigate to segmentation folder
 t = t_in;
 cframefoldername = sprintf('frame%04d',t); % naming convention of seg folders
 count = t_in; % counting variable, for tracking
-while exist(cframefoldername)==7
-% for t = t_in  % alternate loop start, for debugging
+% while exist(cframefoldername)==7
+for t = t_in  % alternate loop start, for debugging
 
     % display current progress of processing
     fprintf('extracting @ timepoint %04d\n',t);
@@ -69,6 +70,11 @@ while exist(cframefoldername)==7
     imageNuc_full = imageNuc_full(:,:,1:z_lim);
     % % resample volume  so voxels have equal dimensions
     % imageNuc_full = imresize3(imageNuc_full, [im_size(1), im_size(2), z_scale]);
+    % downsize volume by factor of 3 in x/y
+    resize_x = round(size(imageNuc_full,1) / ds_factor);
+    resize_y = round(size(imageNuc_full,2) / ds_factor);
+    resize_mat = [resize_x, resize_y, size(imageNuc_full,3)];
+    imageNuc_full = imresize3(imageNuc_full,resize_mat);
 
     % navigate to SegmentationData folder
     cd(data(mn).Source); cd('SegmentationData');
@@ -78,6 +84,14 @@ while exist(cframefoldername)==7
     
     %% (2) Pre-Process
     fprintf('2/6 (pre-process)'); % command line message
+
+    % % background subtraction:
+    % sigma = 1.5; % interpolation sigma for pre-processing
+    % sigma_background = round(10 .* pix_res); % sigma for background subtraction
+    % % Apply a gaussian filter to smooth signal
+    % imageNuc_adjust = imgaussfilt3(imageNuc_full, sigma);
+    % % subtract a large sigma filtered version, for local noise sub:
+    % imageNuc_adjust = imageNuc_adjust - imgaussfilt3(imageNuc_adjust, sigma_background);
 
     % Apply a median filter to reduce noise
     imageNuc_adjust = medfilt3(imageNuc_full); % median filter
@@ -99,13 +113,16 @@ while exist(cframefoldername)==7
         % call segmentCells3D function, from cellpose plugin library
         nuclei = segmentCells3D(cp_nuc, imageNuc_adjust);
     end
+
+    % upsample segmentation to match original image
+    nuclei = imresize3(nuclei, [im_size(1), im_size(2), z_lim], 'box');
     
     fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b') % clear command line message
 
     %% (4) Match tracking #'s to previous timepoint
     fprintf('4/4 (tracking)'); % command line message
 
-    if count > t_in
+    if count > 1
         % if starting at frame > t=1, load previous frame for tracking
         cframefoldername_last = sprintf('frame%04d',t-1); % naming convention of seg folders
         cd(data.Source); cd('SegmentationData'); cd(cframefoldername_last);
