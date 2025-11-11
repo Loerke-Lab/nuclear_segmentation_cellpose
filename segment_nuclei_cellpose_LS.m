@@ -31,7 +31,8 @@ fprintf('Loading First Volume...'); % command line message
 cd(data(mn).Source); % navigate to Source
 im_temp = tiffreadVolume(imageFileList{1}); % load the first image volume
 im_size = size(im_temp); % get size of volumes
-z_scale = round(im_size(3) * pix_res/2); % rescaling factor
+% z_scale = round(im_size(3) * pix_res/2); % optional rescaling factor
+z_scale = im_size(3);
 z_lim = round(im_size(3)) - 13; % segment full volume
 % z_lim = round(im_size(3) .* (2/3)); % only segment apical most 2/3 of volume
 % z_lim = round(im_size(3) .* (2/3)); % only segment apical most 1/2 of volume
@@ -119,21 +120,36 @@ while exist(cframefoldername)==7
     
     fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b') % clear command line message
 
-    %% (4) Match tracking #'s to previous timepoint
+       %% (4) Match tracking #'s to previous timepoint
     fprintf('4/4 (tracking)'); % command line message
 
-    if count > 1
+    % mask out regions without matching cell segmentation
+    % navigate to current SegmentationData folder
+    cd(data.Source); cd('SegmentationData'); cd(cframefoldername);
+    % load mask and erode slightly
+    mask = load('mask.mat').mask; mask = imerode(mask, strel('disk',3));
+    % find nuclei that overlap with mask and delete their masks before tracking
+    ind = nuclei(mask); ind = unique(ind); ind(ind==0) = [];
+    for i = 1:length(ind); nuclei(nuclei==ind(i)) = 0; end
+
+    if count > t_in
         % if starting at frame > t=1, load previous frame for tracking
         cframefoldername_last = sprintf('frame%04d',t-1); % naming convention of seg folders
         cd(data.Source); cd('SegmentationData'); cd(cframefoldername_last);
-        % nuclei_last = load('nuclei.mat').nuclei;
         nuclei_last = load('nuclei_cp.mat').nuclei_cp;
-        nuclei_last = max(nuclei_last,[],3);
+        nuclei_last = max(nuclei_last,[],3); % max projection to get ID list
 
         nuclei_last = nuclei_last .* 10000; % re-scale tracking from previous frame
         nuc_max_proj = max(nuclei, [], 3); % max projection to get list of tracking IDs
         ind_list = unique(nuc_max_proj(:)); ind_list(ind_list==0) = [];
-        counter = max(ind_list) + 1; % updating variable for tracking IDs
+        
+        % on first tracked time point, initialize counter variable as max + 1. 
+        % on subsequent loops, keep counting up from there.
+        if count == t_in+1
+            counter = max(ind_list) + 1; % updating variable for tracking IDs
+        end
+
+        % loop through each nucleus in current frame:
         for n = 1:length(ind_list)
             fprintf(' nuc #%04d/%04d', n, length(ind_list)); % command line message
             % find pixels in last frame that overlap with nuc n in current frame
@@ -188,3 +204,4 @@ end % time loop
 
 cd(od); % return to original directory
 end
+
