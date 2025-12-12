@@ -10,6 +10,12 @@ function [] = segment_nuclei_cellpose(data, exec_envir, varargin)
 %                   ImageFileListNuc, and PixRes.
 %           exec_envir = execution environment of choice, either 'CPU' or
 %                   'GPU' (if available, GPU runs 2-3x faster)
+% OPTIONAL INPUTS:
+%           crop_corner (varargin{1}) = upper right position to crop input image from
+%           crop_size (varargin{2}) = size of XY crop window
+%           cellseg (varargin{3}) = logical input to turn on optional cell segmentation 
+%                   restriction parameter. 1 to limit nuclear segmenataion to regions 
+%                   with cell segmentation, 0 to segment all objects in frame.
 % 
 % OUTPUT:   no output variables-- results saved to SegmentationData 
 %
@@ -21,7 +27,12 @@ t_in = 1; % initial time point (change as needed)
 mn = 1; % movie index in data structure
 % pix_res = data(mn).PixRes; % # of pixels / micron
 % z_step = data(mn).Zstep; % # of microns per z-slice (usually 1)
-imageFileList = data(mn).ImageFileListNuc; % list of raw image file names
+
+% optional input to restrict results to regions with cell segmentation
+if nargin == 5; cellseg = varargin{3}; else; cellseg = 0; end
+
+% get list of raw image file names from data
+imageFileList = data(mn).ImageFileListNuc;
 
 % load cellpose model, with preferred environment
 fprintf('Loading Cellpose model...'); % command line message
@@ -41,6 +52,8 @@ cframefoldername = sprintf('frame%04d',t); % naming convention of seg folders
 count = t_in; % counting variable, for tracking
 while exist(cframefoldername)==7
 % for t = t_in  % alternate loop start, for debugging
+
+    tic; % start clock, for performance testing
 
     % display current progress of processing
     fprintf('extracting @ timepoint %04d\n',t);
@@ -64,7 +77,7 @@ while exist(cframefoldername)==7
         crop_corner = varargin{1};
         imageNuc_full = imageNuc_full(crop_corner(1):(crop_corner(1)+512), ...
             crop_corner(2):(crop_corner(2)+512),:);
-    elseif nargin == 4 % otherwise, use crop_size input:
+    elseif nargin > 3 % otherwise, use crop_size input:
         crop_corner = varargin{1}; crop_size = varargin{2};
         imageNuc_full = imageNuc_full(crop_corner(1):(crop_corner(1)+crop_size(1)), ...
             crop_corner(2):(crop_corner(2)+crop_size(2)),:);
@@ -93,25 +106,27 @@ while exist(cframefoldername)==7
     %% (3) cellpose
     fprintf('3/4 (cellpose)'); % command line message
 
-    % % call segmentCells3D function, from cellpose plugin library
-    % nuclei = segmentCells3D(cp_nuc, imageNuc_adjust); % default batch size
+    % call segmentCells3D function, from cellpose plugin library
+    nuclei = segmentCells3D(cp_nuc, imageNuc_adjust); % default batch size
 
-    % % smaller batch size, if computational resources are limited:
-    nuclei = segmentCells3D(cp_nuc, imageNuc_adjust, 'GPUBatchSize', 4);
+    % % % smaller batch size, if computational resources are limited:
+    % nuclei = segmentCells3D(cp_nuc, imageNuc_adjust, 'GPUBatchSize', 4);
 
     fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b') % clear command line message
 
     %% (4) Match tracking #'s to previous timepoint
     fprintf('4/4 (tracking)'); % command line message
 
-    % mask out regions without matching cell segmentation
-    % navigate to current SegmentationData folder
+     % navigate to current SegmentationData folder
     cd(data.Source); cd('SegmentationData'); cd(cframefoldername);
-    % load mask and erode slightly
-    mask = load('mask.mat').mask; mask = imerode(mask, strel('disk',3));
-    % find nuclei that overlap with mask and delete their masks before tracking
-    ind = nuclei(mask); ind = unique(ind); ind(ind==0) = [];
-    for i = 1:length(ind); nuclei(nuclei==ind(i)) = 0; end
+    % optionally mask out regions without matching cell segmentation:
+    if cellseg == 1
+        % load mask and erode slightly
+        mask = load('mask.mat').mask; mask = imerode(mask, strel('disk',3));
+        % find nuclei that overlap with mask and delete their masks before tracking
+        ind = nuclei(mask); ind = unique(ind); ind(ind==0) = [];
+        for i = 1:length(ind); nuclei(nuclei==ind(i)) = 0; end
+    end
 
     if count > t_in
         % if starting at frame > t=1, load previous frame for tracking
@@ -181,6 +196,7 @@ while exist(cframefoldername)==7
     % delete message 'extracting @ timepoint %04d' before next loop:
     fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b');
 
+    toc; % print clock result, for performance testing
 end % time loop
 
 cd(od); % return to original directory
