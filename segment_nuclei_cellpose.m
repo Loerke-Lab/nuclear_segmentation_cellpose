@@ -197,9 +197,10 @@ while exist(cframefoldername)==7
     fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b');
     
     t_toc = toc; % print clock result, for performance testing
-    fprintf('t = %04d, time elapsed = %02d min %02d sec\n', t-1, round(t_toc/60), round(mod(t_toc/60) .* 60));
+    fprintf('t = %04d, time elapsed = %02d min %02d sec\n', t-1, floor(t_toc/60), round(mod(t_toc, 60)));
 end % time loop
 
 cd(od); % return to original directory
 end
+
 
