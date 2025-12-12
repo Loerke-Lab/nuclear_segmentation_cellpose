@@ -1,42 +1,39 @@
-
-function [] = segment_nuclei_cellpose_LS(data, exec_envir)
+function [] = segment_nuclei_cellpose_LS(data, exec_envir, varargin)
+% segment_nuclei_cellpose(data, exec_envir, crop_corner, crop_size)
+%
 % Function to segment nuclei using cellpose. Requires  Deep Learning Toolbox™, 
 %       Computer Vision Toolbox™, and the Medical Imaging Toolbox™ Interface 
 %       for Cellpose Library. Find cellpose library download instructions here: 
 %       https://www.mathworks.com/matlabcentral/fileexchange/130629-medical-imaging-toolbox-interface-for-cellpose-library?s_tid=srchtitle_support_results_3_cellpose 
 %
 % INPUT:    data = data structure minimally containing fields Source, 
-%                   ImageFileListNuc, and PixRes. This implementations
-%                   assumes the file convention associated with lattice
-%                   light sheet data, where each time point is saved as a
-%                   volumetric image.
+%                   ImageFileListNuc, and PixRes.
 %           exec_envir = execution environment of choice, either 'CPU' or
 %                   'GPU' (if available, GPU runs 2-3x faster)
+% OPTIONAL INPUTS:
+%           crop_corner (varargin{1}) = upper right position to crop input image from
+%           crop_size (varargin{2}) = size of XY crop window
+%           cellseg (varargin{3}) = logical input to turn on optional cell segmentation 
+%                   restriction parameter. 1 to limit nuclear segmenataion to regions 
+%                   with cell segmentation, 0 to segment all objects in frame.
 % 
 % OUTPUT:   no output variables-- results saved to SegmentationData 
 %
 % L. Russell (updated 24 June, 2025)
 od = cd; % original directory
-warning('off','all'); % silence command line warnings
+parallel.gpu.enableCUDAForwardCompatibility(true); % set gpu forward compatibility to true
 
 %% CONSTANTS + LOAD DATA
 t_in = 1; % initial time point (change as needed)
 mn = 1; % movie index in data structure
-ds_factor = 2; % down-sampling factor
-pix_res = data(mn).PixRes; % # of pixels / micron
-imageFileList = data(mn).ImageFileListNuc; % list of raw image file names
+% pix_res = data(mn).PixRes; % # of pixels / micron
+% z_step = data(mn).Zstep; % # of microns per z-slice (usually 1)
 
-% load first image, to extract dimensions
-fprintf('Loading First Volume...'); % command line message
-cd(data(mn).Source); % navigate to Source
-im_temp = tiffreadVolume(imageFileList{1}); % load the first image volume
-im_size = size(im_temp); % get size of volumes
-% z_scale = round(im_size(3) * pix_res/2); % optional rescaling factor
-z_scale = im_size(3);
-z_lim = round(im_size(3)) - 13; % segment full volume
-% z_lim = round(im_size(3) .* (2/3)); % only segment apical most 2/3 of volume
-% z_lim = round(im_size(3) .* (2/3)); % only segment apical most 1/2 of volume
-fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b'); % clear command line message
+% optional input to restrict results to regions with cell segmentation
+if nargin == 5; cellseg = varargin{3}; else; cellseg = 0; end
+
+% get list of raw image file names from data
+imageFileList = data(mn).ImageFileListNuc;
 
 % load cellpose model, with preferred environment
 fprintf('Loading Cellpose model...'); % command line message
@@ -57,80 +54,76 @@ count = t_in; % counting variable, for tracking
 while exist(cframefoldername)==7
 % for t = t_in  % alternate loop start, for debugging
 
+    tic; % start clock, for performance testing
+
     % display current progress of processing
     fprintf('extracting @ timepoint %04d\n',t);
 
     %% (1) load data
     fprintf('1/6 (load data)'); % command line message
 
-    % loop through each Z-plane and filter/ pre-process images
-    cd(data(mn).Source); % navigate to Source
-    % load image from Source
-    imageNuc_full = tiffreadVolume(imageFileList{t});
-    % limit analysis to top 2/3 of volume
-    imageNuc_full = imageNuc_full(:,:,1:z_lim);
-    % % resample volume  so voxels have equal dimensions
-    % imageNuc_full = imresize3(imageNuc_full, [im_size(1), im_size(2), z_scale]);
-    % downsize volume by factor of 3 in x/y
-    resize_x = round(size(imageNuc_full,1) / ds_factor);
-    resize_y = round(size(imageNuc_full,2) / ds_factor);
-    resize_mat = [resize_x, resize_y, size(imageNuc_full,3)];
-    imageNuc_full = imresize3(imageNuc_full,resize_mat);
+    cd(data(mn).Source); % navigate to source
 
-    % navigate to SegmentationData folder
-    cd(data(mn).Source); cd('SegmentationData');
-    cd(cframefoldername);
+    % % load images stored as individual Z-slices
+    % imageNuc_full = [];
+    % % loop through each Z-plane and filter/ pre-process images
+    % imageNuc_full = zeros(im_size); % pre-allocate storage for raw image loading
+    % for z = 1:size(imageFileList,2) % loop through Z
+    %     imageNuc_temp = imread(imageFileList{t,z}); % read raw image
+    %     imageNuc_full(:,:,z) = double(imageNuc_temp(:,:,1)); % convert from RGB to double
+    % end
+    
+    % load images stored as one volume per time point
+    imageNuc_full = tiffreadVolume(imageFileList{t}); % load image
+
+    % if exactly 3 inputs, assume 512 x 512 cropping window:
+    if nargin == 3
+        crop_corner = varargin{1};
+        imageNuc_full = imageNuc_full(crop_corner(1):(crop_corner(1)+512), ...
+            crop_corner(2):(crop_corner(2)+512),:);
+    elseif nargin > 3 % otherwise, use crop_size input:
+        crop_corner = varargin{1}; crop_size = varargin{2};
+        imageNuc_full = imageNuc_full(crop_corner(1):(crop_corner(1)+crop_size(1)), ...
+            crop_corner(2):(crop_corner(2)+crop_size(2)),:);
+    end
 
     fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b'); % clear command line message
     
     %% (2) Pre-Process
     fprintf('2/6 (pre-process)'); % command line message
 
-    % % background subtraction:
-    % sigma = 1.5; % interpolation sigma for pre-processing
-    % sigma_background = round(10 .* pix_res); % sigma for background subtraction
-    % % Apply a gaussian filter to smooth signal
-    % imageNuc_adjust = imgaussfilt3(imageNuc_full, sigma);
-    % % subtract a large sigma filtered version, for local noise sub:
-    % imageNuc_adjust = imageNuc_adjust - imgaussfilt3(imageNuc_adjust, sigma_background);
-
     % Apply a median filter to reduce noise
-    imageNuc_adjust = medfilt3(imageNuc_full); % median filter
+    imageNuc_adjust = imageNuc_full; % pre-allocate space for adjusted image
+    imageNuc_adjust = medfilt3(imageNuc_adjust); % median filter
+    imageNuc_adjust = imgaussfilt3(imageNuc_adjust, [2 2 1]); % gaussian filter
     imageNuc_adjust = mat2gray(imageNuc_adjust); % normalize to 1
     
     fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b') % clear command line message
     
     %% (3) cellpose
-
     fprintf('3/4 (cellpose)'); % command line message
-    
-    % segment volume based on exec_envir input
-    if strcmp(exec_envir, 'GPU')
-        % % call segmentCells3D function, from cellpose plugin library
-        % nuclei = segmentCells3D(cp_nuc, imageNuc_adjust); % default batch size
-        % smaller batch size, if computational resources are limited:
-        nuclei = segmentCells3D(cp_nuc, imageNuc_adjust, 'GPUBatchSize', 4);
-    elseif strcmp(exec_envir, 'CPU')
-        % call segmentCells3D function, from cellpose plugin library
-        nuclei = segmentCells3D(cp_nuc, imageNuc_adjust);
-    end
 
-    % upsample segmentation to match original image
-    nuclei = imresize3(nuclei, [im_size(1), im_size(2), z_lim], 'box');
-    
+    % call segmentCells3D function, from cellpose plugin library
+    nuclei = segmentCells3D(cp_nuc, imageNuc_adjust); % default batch size = 8
+
+    % % optional call w/ smaller batch size, if computational resources are limited:
+    % nuclei = segmentCells3D(cp_nuc, imageNuc_adjust, 'GPUBatchSize', 2);
+
     fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b') % clear command line message
 
-       %% (4) Match tracking #'s to previous timepoint
+    %% (4) Match tracking #'s to previous timepoint
     fprintf('4/4 (tracking)'); % command line message
 
-    % mask out regions without matching cell segmentation
     % navigate to current SegmentationData folder
     cd(data.Source); cd('SegmentationData'); cd(cframefoldername);
-    % load mask and erode slightly
-    mask = load('mask.mat').mask; mask = imerode(mask, strel('disk',3));
-    % find nuclei that overlap with mask and delete their masks before tracking
-    ind = nuclei(mask); ind = unique(ind); ind(ind==0) = [];
-    for i = 1:length(ind); nuclei(nuclei==ind(i)) = 0; end
+    % optionally mask out regions without matching cell segmentation:
+    if cellseg == 1
+        % load mask and erode slightly
+        mask = load('mask.mat').mask; mask = imerode(mask, strel('disk',3));
+        % find nuclei that overlap with mask and delete their masks before tracking
+        ind = nuclei(mask); ind = unique(ind); ind(ind==0) = [];
+        for i = 1:length(ind); nuclei(nuclei==ind(i)) = 0; end
+    end
 
     if count > t_in
         % if starting at frame > t=1, load previous frame for tracking
@@ -197,11 +190,12 @@ while exist(cframefoldername)==7
 
     % delete command line message (saving)
     fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b');
+    % % delete message 'extracting @ timepoint %04d' before next loop:
+    % fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b');
 
-    % delete message 'extracting @ timepoint %04d' before next loop:
-    fprintf('\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b'); 
+    t_toc = toc; % print clock result, for performance testing
+    fprintf('t = %04d, time elapsed = %02d min %02d sec\n', t-1, round(t_toc/60), round(mod(t_toc/60) .* 60));
 end % time loop
 
 cd(od); % return to original directory
 end
-
